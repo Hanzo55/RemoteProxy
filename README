@@ -1,0 +1,18 @@
+RemoteProxy
+
+This is a simple CF wrapper for webservice calls. It will provide you with some better availability, caching data as it's requested, which can be used if the service ever goes offline.
+
+This version only supports calls that return queries, but adding support for other types should be trivial.
+
+USAGE:
+
+Take your existing webservice calls:
+
+<cfset wsService = CreateObject('webservice','http://www.myservice.com/') />
+
+And compose them into the proxy instead:
+
+<cfset wsService = CreateObject('component','remoteProxy') />
+<cfset wsService.setEndpoint('http://www.myservice.com/') />
+
+Now, the rest of your code should remain the same. When your CF code calls a method on the webservice, the remoteProxy calls it instead, delegating to onMissingMethod(), where the magic happens.
