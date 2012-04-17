@@ -11,7 +11,6 @@
 	
 	internals look like this:
 	
-	variables.methods[MethodName][ColumnList] 
 	variables.methods[MethodName][XXXX-XXXX-XXXX] <-- hash of 1 set of arguments
 	variables.methods[MethodName][YYYY-YYYY-YYYY] <-- hash of another set of args
 	variables.methods[MethodName][ZZZZ-ZZZZ-ZZZZ] <-- hash of a third set, etc, so on, ie. hand-built caching
@@ -42,7 +41,9 @@
 		<cfset var argValues = "" />
 		<cfset var thisArg = 0 />
 		<cfset var cacheKey = 0 />
+		<cfset var firstKey = "" />
 		<cfset var data = 0 />
+		<cfset var defaultSet = 0 />
 	    
 	    <!--- loop over the arguments, create a hash --->
 	    <cfloop list="#StructKeyList(arguments.missingMethodArguments)#" index="thisArg">
@@ -61,46 +62,43 @@
 			<!--- it does not exist, so make the webservice call and cache the results --->
 			<cftry>
 			
-				<cfif StructIsEmpty(variables.credentials)>
+				<cfif StructIsEmpty( variables.credentials )>
 		
 					<cfinvoke webservice="#variables.endpoint#"
-						method="#arguments.missingMethodName#"
-						returnVariable="data"
-						argumentCollection="#arguments.missingMethodArguments#"
-						timeout="45" />
+							method="#arguments.missingMethodName#"
+							returnVariable="data"
+							argumentCollection="#arguments.missingMethodArguments#"
+							timeout="10" />
 		
 				<cfelse>
 		
 					<cfinvoke webservice="#variables.endpoint#"
-						method="#arguments.missingMethodName#"
-						returnVariable="data"
-						argumentCollection="#arguments.missingMethodArguments#"
-						timeout="45"
-						username="#variables.credentials.username#"
-						password="#variables.credentials.password#" />			
+							method="#arguments.missingMethodName#"
+							returnVariable="data"
+							argumentCollection="#arguments.missingMethodArguments#"
+							timeout="10"
+							username="#variables.credentials.username#"
+							password="#variables.credentials.password#" />			
 		
 				</cfif>
 
 				<cfset variables.methods[arguments.missingMethodName][cacheKey] = data />
 				
-				<!--- is the column list registered? Register it if not, for when the services dies later. --->
-				<cfif IsQuery( data ) AND NOT StructKeyExists( variables.methods[arguments.missingMethodName], 'ColumnList' )>
-					
-					<cfset variables.methods[arguments.missingMethodName]['ColumnList'] = data.ColumnList />
-
-				</cfif>
-			
 				<cfcatch type="any">
 
 					<!--- ok, we failed, presumably due to at timeout, so log the actual error --->
 					<cflog file="RemoteProxy" text="#CFCATCH.Message# - #CFCATCH.Detail#" />
 					
-					<!--- you may want to do additional things here, like freak out and email admins and such --->
-
-					<!--- let's not have our website die completely with hard errors. Send an empty query back, based on the columns of the actual query, when it was alive --->
-					<cfif StructKeyExists( variables.methods[arguments.missingMethodName], 'ColumnList' )>
-
-						<cfset variables.methods[arguments.missingMethodName][cacheKey] = QueryNew( variables.methods[arguments.missingMethodName].ColumnList ) />
+					<!--- do we have *anything* in the cache we can use as a map? --->					
+					<cfif NOT StructIsEmpty( variables.methods[arguments.missingMethodName] )>
+						
+						<cfset firstKey = ListFirst( StructKeyList( variables.methods[arguments.missingMethodName] ) ) />
+						
+						<cfset defaultSet = CreateObject( 'component', 'DefaultTypeDelegate' ) />
+						<cfset defaultSet.setData( variables.methods[arguments.missingMethodName]['#firstKey#'] ) />
+						
+						<!--- and now we can safely return default empty set in the absence of the webservice to describe it --->
+						<cfset variables.methods[arguments.missingMethodName][cacheKey] = defaultSet.getEmptyData() />
 
 					<cfelse>
 
@@ -118,6 +116,11 @@
 		</cfif>
 	    
 	    <cfreturn variables.methods[arguments.missingMethodName][cacheKey] />
-    </cffunction>	
+    </cffunction>
+	
+	<cffunction name="GetDebugInternals" returntype="struct" access="public" output="false">
+		
+		<cfreturn variables />
+	</cffunction>
 
 </cfcomponent>
