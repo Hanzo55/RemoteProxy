@@ -16,3 +16,21 @@ And compose them into the proxy instead:
 <cfset wsService.setEndpoint('http://www.myservice.com/') />
 
 Now, the rest of your code should remain the same. When your CF code calls a method on the webservice, the remoteProxy calls it instead, delegating to onMissingMethod(), where the magic happens.
+
+NOTES ON USAGE:
+
+1. You MUST pass your arguments to this component by NAME, in order for onMissingMethod to map them appropriately. Thus, your old call of:
+
+<cfset wsService.getUsersByDept(1,'billing') />
+
+needs to be updated to:
+
+<cfset wsService.getUsersByDept(user_id=1,departmentName='billing') />
+
+2. You must store the component in a shared scope that will persist across requests, ie. APPLICATION or SERVER. This is due to the fact that, internally, the component uses its private VARIABLES to cache method calls:
+
+<cfset APPLICATION.wsService = wsService />
+
+I realize this 2nd point is obvious to experienced CF developers, but may not be so for new folks. Be aware of storing a CFC in a shared scope:
+- Changes to the CFC you make won't take affect until you reload the CF server,
+- Memory usage will grow as the cache grows, so think through how you utilize this proxy. Build in your own timing mechanisms, or perhaps a way to flush the cache with a ?reload param.
