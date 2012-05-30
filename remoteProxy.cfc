@@ -17,8 +17,15 @@
 	--->
 	
 	<cfset variables.endpoint 		= "" />
+	<cfset variables.refresh		= false />
 	<cfset variables.credentials 	= StructNew() />
 	<cfset variables.methods 		= StructNew() />
+	<cfset variables.logging 		= false />
+	
+	<cffunction name="enableLogging" returntype="void" access="public" output="false">
+	
+		<cfset variables.logging		= true />
+	</cffunction>
 
 	<cffunction name="setEndpoint" returntype="void" access="public" output="false">
 		<cfargument name="endpointURL" type="string" required="true" />
@@ -32,7 +39,23 @@
 		
 		<cfset variables.credentials.username = arguments.username />
 		<cfset variables.credentials.password = arguments.password />
-	</cffunction>	
+	</cffunction>
+	
+	<cffunction name="mustRefresh" returntype="boolean" access="public" output="false">
+	
+		<cfif (variables.refresh)>
+			<!--- we'll refresh this time, but make sure that next time we don't --->
+			<cfset variables.refresh = false />		
+			<cfreturn true />
+		<cfelse>
+			<cfreturn false />
+		</cfif>
+	</cffunction>
+	
+	<cffunction name="flushStub" returntype="void" access="public" output="false">
+	
+		<cfset variables.refresh = true />
+	</cffunction>
 	
     <cffunction name="onMissingMethod" returntype="any" access="public" output="false">
 		<cfargument name="MissingMethodName" type="string" required="true" />
@@ -44,20 +67,56 @@
 		<cfset var firstKey = "" />
 		<cfset var data = 0 />
 		<cfset var defaultSet = 0 />
+		<cfset var sortedKeysArr = 0 />
+		<cfset var i = 0 />
+		<cfset var noCache = false />
+		<cfset var missingArgs = arguments.missingMethodArguments />
+
+		<cfif StructKeyExists( missingArgs, "nocache" )>
+		
+			<cfif (missingArgs.nocache)>
+				<cfset noCache = true />
+			</cfif>
+
+			<cfset StructDelete( missingArgs, "nocache" ) />
+		
+		</cfif>
+
+	    <!--- sort the arguments alphbeticaly by name --->
+	    <cfset sortedKeysArr = StructSort( missingArgs ) />
 	    
 	    <!--- loop over the arguments, create a hash --->
-	    <cfloop list="#StructKeyList(arguments.missingMethodArguments)#" index="thisArg">
-	    	<cfset argValues = ListAppend( argValues, arguments.missingMethodArguments[thisArg] ) />
-		</cfloop>
+	    <cfloop from="1" to="#ArrayLen(sortedKeysArr)#" index="i">
+	    	<cfset argValues = ListAppend( argValues, missingArgs[sortedKeysArr[i]] ) />
+	    </cfloop>
+	    
+	    <cfif (variables.logging)>
+			<cflog file="RemoteProxy" type="information" text="Method: #arguments.missingMethodName#: Arguments being hashed: #argValues#" />
+		</cfif>
 		
 		<cfset cacheKey = Hash( argValues ) />
+		
+	    <cfif (variables.logging)>
+			<cflog file="RemoteProxy" type="information" text="Method: #arguments.missingMethodName#: Arguments hashed into: #cacheKey#" />
+		</cfif>
 		
 		<!--- does it exist in the cache? --->
 		<cfif NOT StructKeyExists( variables.methods, arguments.missingMethodName )>
 			<cfset variables.methods[arguments.missingMethodName] = StructNew() />
 		</cfif>
 		
-		<cfif NOT StructKeyExists( variables.methods[arguments.missingMethodName], cacheKey )>
+		<!--- SHOLMES: providing clarity: If an argument exists named 'nocache' (and it is TRUE)...or if cached version simply does not exist... --->
+		<cfif ( noCache ) OR ( NOT StructKeyExists( variables.methods[arguments.missingMethodName], cacheKey ) )>
+		
+		    <cfif (variables.logging)>
+
+			    <cfif ( noCache )>
+					<cflog file="RemoteProxy" type="information" text="Method: #arguments.missingMethodName#: Caching disabled, querying endpoint" />
+				<cfelse>
+					<cflog file="RemoteProxy" type="information" text="Method: #arguments.missingMethodName#: Hash #cacheKey# does not exist, querying endpoint" />
+				</cfif>
+
+			</cfif>
 
 			<!--- it does not exist, so make the webservice call and cache the results --->
 			<cftry>
@@ -67,18 +126,20 @@
 					<cfinvoke webservice="#variables.endpoint#"
 							method="#arguments.missingMethodName#"
 							returnVariable="data"
-							argumentCollection="#arguments.missingMethodArguments#"
-							timeout="10" />
+							argumentCollection="#missingArgs#"
+							timeout="10"
+							refreshWSDL="#mustRefresh()#" />
 		
 				<cfelse>
 		
 					<cfinvoke webservice="#variables.endpoint#"
 							method="#arguments.missingMethodName#"
 							returnVariable="data"
-							argumentCollection="#arguments.missingMethodArguments#"
+							argumentCollection="#missingArgs#"
 							timeout="10"
 							username="#variables.credentials.username#"
-							password="#variables.credentials.password#" />			
+							password="#variables.credentials.password#"
+							refreshWSDL="#mustRefresh()#" />			
 		
 				</cfif>
 
@@ -87,12 +148,18 @@
 				<cfcatch type="any">
 
 					<!--- ok, we failed, presumably due to at timeout, so log the actual error --->
-					<cflog file="RemoteProxy" text="#CFCATCH.Message# - #CFCATCH.Detail#" />
+					<cfif (variables.logging)>
+						<cflog file="RemoteProxy" text="#CFCATCH.Message# - #CFCATCH.Detail#" />
+					</cfif>
 					
 					<!--- do we have *anything* in the cache we can use as a map? --->					
 					<cfif NOT StructIsEmpty( variables.methods[arguments.missingMethodName] )>
 						
 						<cfset firstKey = ListFirst( StructKeyList( variables.methods[arguments.missingMethodName] ) ) />
+						
+						<cfif (variables.logging)>
+							<cflog file="RemoteProxy" text="utilizing cached key [#firstKey#]" />
+						</cfif>
 						
 						<cfset defaultSet = CreateObject( 'component', 'DefaultTypeDelegate' ) />
 						<cfset defaultSet.setData( variables.methods[arguments.missingMethodName]['#firstKey#'] ) />
@@ -112,6 +179,12 @@
 				</cfcatch>
 
 			</cftry>
+			
+		<cfelse>
+		
+			<cfif (variables.logging)>
+				<cflog file="RemoteProxy" type="information" text="Method: #arguments.missingMethodName#: Hash #cacheKey# exists, using for passed in arguments: #argValues#" />
+			</cfif>				
 
 		</cfif>
 	    
