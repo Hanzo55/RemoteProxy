@@ -15,6 +15,18 @@
 
 		<cfswitch expression="#type#">
 
+			<cfcase value="String">
+
+				<cfset emptydata = "" />
+
+			</cfcase>
+			
+			<cfcase value="Boolean">
+			
+				<cfset emptydata = false />
+			
+			</cfcase>
+
 			<cfcase value="Struct">
 				
 				<!--- create a struct of empty keys that match the data's keys --->
